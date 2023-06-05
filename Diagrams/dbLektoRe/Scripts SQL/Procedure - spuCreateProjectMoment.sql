@@ -9,6 +9,7 @@ CREATE DEFINER=`root`@`%` PROCEDURE `spuCreateProjectMoment`( IN in_idNetwork 	 
 												   , in_idProfessor   	INT
 												   , in_idProjectTrack 	INT
 												   , in_txJobId       	VARCHAR(36)
+												   , in_Debugging        TINYINT 
 												)
 CreateProjectMoment: BEGIN
 
@@ -25,7 +26,7 @@ CreateProjectMoment: BEGIN
 	DECLARE va_NumStudents 		INT;				# Quantidade de alunos na turma			  
 	DECLARE va_NumProjects 		TINYINT DEFAULT 3; 	# Quantidade de projetos selecionados para o passo 2
 	DECLARE va_studentPerGroup 	TINYINT;			# Quantidade de estudantes por grupo
-	DECLARE va_Logging            TINYINT DEFAULT 1;  # Criacao de Log de distribuicao
+	DECLARE va_Logging            TINYINT DEFAULT 0;  # Criacao de Log de distribuicao
 	
 	DECLARE EXIT HANDLER FOR SQLEXCEPTION, SQLWARNING 
 	BEGIN
@@ -36,6 +37,8 @@ CreateProjectMoment: BEGIN
 		ROLLBACK;
 		RESIGNAL;
 	END;
+
+	SET in_Debugging = IFNULL(in_Debugging, 0);
 	
 	# Tabela de projetos selecionados no momento
 	DROP TABLE IF EXISTS tabProject;
@@ -132,9 +135,15 @@ CreateProjectMoment: BEGIN
 				ON Proj.idProject = PrCo.idProject
 				AND Proj.coGrade   = PrCo.coGrade 
 		WHERE Trac.idProjectTrack = in_idProjectTrack
-		ORDER BY nuOrder
+		ORDER BY nuGroup
 		LIMIT va_NumProjects
 		) Projects;	
+		
+	## Debugging
+	IF in_Debugging = 1
+	THEN	
+		SELECT 'tabProject', idProject FROM tabProject;		
+	END IF;
 		
 	# Recupera os dados do momento
 	INSERT INTO tabProjectMoment
@@ -191,6 +200,12 @@ CreateProjectMoment: BEGIN
 		SET MESSAGE_TEXT = 'O momento informado não foi encontrado no banco de dados. O erro ocorreu na Stored Procedure: spuCreateProjectMoment.';	
 	END IF;
 	
+	## Debugging
+	IF in_Debugging = 1
+	THEN	
+		SELECT 'tabProjectMoment', idProjectMoment, nuPlacement, idProjectStage, nuStageGroup FROM tabProjectMoment;	
+	END IF;
+	
 	# Já existe registro na ProjectMomentStage para o momento informado?
 	IF EXISTS ( SELECT *
 			  FROM tabProjectMoment PrMo
@@ -240,7 +255,7 @@ CreateProjectMoment: BEGIN
 	# Numero de estudantes por grupo (para cada passo)
 	SET va_studentPerGroup := ( SELECT FLOOR(va_NumStudents / va_NumProjects) );
 	
-	# Carga de dados dos alunos da turma
+	# Carga de dados dos alunos da turma - 3 Grupos distintos
 	INSERT INTO tabStudentGroup
 			( 
 			  idNetwork		
@@ -267,7 +282,16 @@ CreateProjectMoment: BEGIN
 	AND   StCl.idSchoolYear	= in_idSchoolYear
 	AND   StCl.idClass		= in_idClass
 	AND   StCl.inStatus      = 1;
-
+	
+	## Debugging
+	IF in_Debugging = 1
+	THEN	
+		SELECT 'tabStudentGroup', nuPlacement, GROUP_CONCAT( idStudent ORDER BY idStudent) AS StudentGroup 
+		FROM tabStudentGroup 
+		GROUP BY nuPlacement 
+		ORDER BY 1, 2;	
+	END IF;
+	
 	# Recupera os alunos fora dos grupos definidos para realizar a distribuicao equalitaria 
 	IF MOD(va_NumStudents, va_NumProjects) > 0 
 	THEN
@@ -306,6 +330,12 @@ CreateProjectMoment: BEGIN
 				    AND Adju.idStudent  = Grup.idStudent
 		   SET Grup.nuPlacement = Adju.nuPlacement;
 
+		## Debugging
+		IF in_Debugging = 1
+		THEN	
+			SELECT nuPlacement, idStudent FROM tabGroupAdjustment ORDER BY 1, 2;	
+		END IF;
+
 	END IF;
 
 	# Inicio da transacao
@@ -319,7 +349,8 @@ CreateProjectMoment: BEGIN
 				, idSchool             
 				, coGrade              
 				, idSchoolYear         
-				, idClass       				, idProjectStage       
+				, idClass       
+				, idProjectStage       
 				, nuStageGroup         
 				, dtInserted           
 				)
@@ -335,7 +366,13 @@ CreateProjectMoment: BEGIN
 		FROM tabProjectMoment PrMo
 		ORDER BY PrMo.nuStageGroup
 			  , PrMo.idProjectStage;		
-		
+			  
+		## Debugging
+		IF in_Debugging = 1
+		THEN	
+			SELECT 'ProjectMomentStage', idProjectStage, nuStageGroup FROM tabProjectMoment;			  
+		END IF;
+
 		# Carga do grupo de alunos nas etapas
 		INSERT INTO ProjectMomentGroup
 				(
@@ -344,10 +381,10 @@ CreateProjectMoment: BEGIN
 				, coGrade              
 				, idSchoolYear         
 				, idClass              
-				, idProjectMomentStage 
+				, idProjectStage 
+				, idProjectMomentStage
 				, idUserStudent        
 				, idStudent            
-				, coAssessment         
 				, dtInserted           
 				)
 		SELECT MoSt.idNetwork            
@@ -355,10 +392,10 @@ CreateProjectMoment: BEGIN
 			, MoSt.coGrade              
 			, MoSt.idSchoolYear         
 			, MoSt.idClass              
-			, MoSt.idProjectMomentStage 
+			, PrMo.idProjectStage 
+			, MoSt.idProjectMomentStage
 			, Stud.idUserStudent        
 			, Stud.idStudent            
-			, 'NO' AS coAssessment         
 			, NOW() AS dtInserted  
 		FROM ProjectMomentStage MoSt
 			INNER JOIN tabProjectMoment PrMo
@@ -375,7 +412,36 @@ CreateProjectMoment: BEGIN
 				  AND Stud.coGrade 		= PrMo.coGrade		
 				  AND Stud.idSchoolYear 	= PrMo.idSchoolYear								    
 				  AND Stud.idClass 		= PrMo.idClass								    			  
-		WHERE Stud.nuPlacement = PrMo.nuPlacement; # Batimento do grupo da etapa com o grupo de alunos			  
+		WHERE Stud.nuPlacement = PrMo.nuPlacement; # Batimento do grupo da etapa com o grupo de alunos		
+		
+		## Debugging
+		IF in_Debugging = 1
+		THEN	
+			SELECT PrMo.idProjectMoment
+				, PrMo.idProjectStage 
+				, MoSt.idProjectMomentStage
+				, GROUP_CONCAT( idStudent ORDER BY idStudent) AS StudentGroup          
+			FROM ProjectMomentStage MoSt
+				INNER JOIN tabProjectMoment PrMo
+					   ON PrMo.idProjectMoment 	= MoSt.idProjectMoment
+					  AND PrMo.idNetwork 		= MoSt.idNetwork
+					  AND PrMo.idSchool 		= MoSt.idSchool
+					  AND PrMo.coGrade 			= MoSt.coGrade
+					  AND PrMo.idSchoolYear 		= MoSt.idSchoolYear
+					  AND PrMo.idClass 			= MoSt.idClass	
+					  AND PrMo.idProjectStage 	= MoSt.idProjectStage						  
+				INNER JOIN tabStudentGroup Stud
+					   ON Stud.idNetwork 	= PrMo.idNetwork
+					  AND Stud.idSchool 	= PrMo.idSchool		
+					  AND Stud.coGrade 		= PrMo.coGrade		
+					  AND Stud.idSchoolYear 	= PrMo.idSchoolYear								    
+					  AND Stud.idClass 		= PrMo.idClass								    			  
+			WHERE Stud.nuPlacement = PrMo.nuPlacement
+			GROUP BY PrMo.idProjectStage
+				  , MoSt.idProjectMomentStage
+			ORDER BY idProjectMoment
+				  , StudentGroup; # Batimento do grupo da etapa com o grupo de alunos		
+		END IF;
 
 		# Atualiza a situacao e o job de processamento dos momentos das aulas
 		UPDATE ProjectMoment PrMo
@@ -421,7 +487,8 @@ CreateProjectMoment: BEGIN
 			, GROUP_CONCAT( Grup.idStudent )
 		FROM ProjectMoment PrMo
 			INNER JOIN ProjectTrackStage TrSt
-				   ON TrSt.idProjectTrackStage = PrMo.idProjectTrackStage
+				   ON TrSt.idProjectTrackStage  = PrMo.idProjectTrackStage
+				  AND  TrSt.coGrade = PrMo.coGrade
 			LEFT JOIN ProjectMomentStage MoSt
 				   ON MoSt.idProjectMoment 	= PrMo.idProjectMoment
 				  AND MoSt.idNetwork 		= PrMo.idNetwork
@@ -430,12 +497,13 @@ CreateProjectMoment: BEGIN
 				  AND MoSt.idSchoolYear 		= PrMo.idSchoolYear
 				  AND MoSt.idClass 			= PrMo.idClass
 			LEFT JOIN ProjectMomentGroup Grup
-				   ON Grup.idProjectMomentStage 	= MoSt.idProjectMomentStage
-				  AND Grup.idNetwork 			= MoSt.idNetwork
+				   ON Grup.idNetwork 			= MoSt.idNetwork
 				  AND Grup.idSchool 			= MoSt.idSchool
 				  AND Grup.coGrade 				= MoSt.coGrade
 				  AND Grup.idSchoolYear 			= MoSt.idSchoolYear
 				  AND Grup.idClass 				= MoSt.idClass
+				  AND Grup.idProjectStage		= MoSt.idProjectStage
+				  AND Grup.idProjectMomentStage 	= MoSt.idProjectMomentStage
 			LEFT JOIN ProjectStage Stag
 				   ON Stag.idProjectStage = MoSt.idProjectStage
 				  AND Stag.coGrade 		 = MoSt.coGrade
