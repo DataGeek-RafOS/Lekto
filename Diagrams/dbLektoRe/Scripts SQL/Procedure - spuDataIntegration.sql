@@ -15,6 +15,7 @@ DataIntegration: BEGIN
 	DECLARE va_ProfileFound		INT;
 	DECLARE va_ProfileDeleted	TINYINT;
 	DECLARE va_ProfileStatus		TINYINT;
+	DECLARE va_ProfileExists      TINYINT DEFAULT 0;
 	DECLARE va_RegionalNotFound   VARCHAR(50);
      DECLARE va_StageNotFound      VARCHAR(50);
      DECLARE va_GradeNotFound      VARCHAR(50);
@@ -718,17 +719,19 @@ DataIntegration: BEGIN
      	/*****************/
      	/* Perfil: Aluno */ 
 
+		-- Verifica se o usuário já possui perfil cadastrado
+		SET va_ProfileExists := ( SELECT COUNT(1)
+							 FROM UserProfile
+							 WHERE idNetwork = in_idNetwork
+							 AND   idUser    = va_idLektoUser
+							 AND   coProfile = 'ALNO' 
+							 FOR UPDATE );			
+
      	IF va_isStudent = 'true'
      	THEN
      	
      		# Possui registro cadastrado?
-     		IF ( SELECT COUNT(1)
-     			FROM UserProfile
-     			WHERE idNetwork = in_idNetwork
-     			AND   idUser    = va_idLektoUser
-     			AND   coProfile = 'ALNO'
-				FOR UPDATE
-     	        ) = 0
+     		IF va_ProfileExists = 0
      		THEN
      		
      			INSERT INTO UserProfile
@@ -777,22 +780,41 @@ DataIntegration: BEGIN
 				END IF;					
      				
      		END IF;		
-     	
-     	END IF; # isStudent		
+			
+     	ELSE -- isStudent = False
 		
+			-- Se nao for aluno mas possuir perfil previo cadastrado, desabilita o perfil
+			IF va_ProfileExists > 0
+			THEN
+     			
+				UPDATE UserProfile
+     			   SET inDeleted = 0
+     			     , inStatus = 0
+     				, dtLastUpdate = NOW()
+     			WHERE UserProfile.idNetwork = in_idNetwork
+     			AND   UserProfile.idUser    = va_idLektoUser
+     			AND   UserProfile.coProfile = 'ALNO';			
+				
+			END IF;
+			 
+     	END IF; # isStudent	
+
      	/*********************/
      	/* Perfil: Professor */      
+	
+		-- Verifica se o usuário já possui perfil cadastrado
+		SET va_ProfileExists := ( SELECT COUNT(1)
+							 FROM UserProfile
+							 WHERE idNetwork = in_idNetwork
+							 AND   idUser    = va_idLektoUser
+							 AND   coProfile = 'TUTO' 
+							 FOR UPDATE );	
 		
      	IF ( SELECT COUNT(1) FROM tabSchoolProfessor ) > 0 # Escolas vinculadas ao professor no payload
      	THEN
 		
      		# Usuário já tem perfil de professor na rede?
-     		IF ( SELECT COUNT(*)
-     			FROM UserProfile
-     			WHERE idNetwork = in_idNetwork
-     			AND   idUser    = va_idLektoUser
-     			AND   coProfile = 'TUTO'
-     		   ) = 0
+     		IF va_ProfileExists = 0
      		THEN
      		
      			INSERT INTO UserProfile
@@ -864,21 +886,40 @@ DataIntegration: BEGIN
 						    AND   UserProfileSchool.idSchool  	  = School.idSchool
 						    AND   UserProfileSchool.idUserProfile = UserProfile.idUserProfile
 					       );
+						  
+		ELSE
+		
+			-- Se nao for tutor (ou nao for enviado no payload) mas possuir perfil previo cadastrado, desabilita o perfil
+     		IF va_ProfileExists > 0
+     		THEN		
+		
+     			UPDATE UserProfile
+     			   SET inDeleted = 0
+     			     , inStatus = 0
+     				, dtLastUpdate = NOW()
+     			WHERE UserProfile.idNetwork = in_idNetwork
+     			AND   UserProfile.idUser    = va_idLektoUser
+     			AND   UserProfile.coProfile = 'TUTO';
+				
+			END IF;
      	
      	END IF; 	
-     	
+	
      	/*********************************/
      	/* Perfil: Administrador de Rede */ 
+
+		-- Verifica se o usuário já possui perfil cadastrado
+		SET va_ProfileExists := ( SELECT COUNT(1)
+							 FROM UserProfile
+							 WHERE idNetwork = in_idNetwork
+							 AND   idUser    = va_idLektoUser
+							 AND   coProfile = 'ADSN' 
+							 FOR UPDATE );			
 		
      	IF ( SELECT LOWER(in_jsonData ->> '$.profiles.isNetworkAdmin') AS isNetworkAdmin ) = 'true'
      	THEN
      	
-     		IF ( SELECT COUNT(*)
-     			FROM UserProfile
-     			WHERE idNetwork = in_idNetwork
-     			AND   idUser    = va_idLektoUser
-     			AND   coProfile = 'ADSN'
-     		   ) = 0
+     		IF va_ProfileExists = 0
      		THEN 
      		
      			INSERT INTO UserProfile
@@ -911,11 +952,35 @@ DataIntegration: BEGIN
      			AND   UserProfile.coProfile = 'ADSN';
      				
      		END IF;
+			
+     	ELSE
+
+			-- Se nao for administrador de rede (ou nao for enviado no payload) mas possuir perfil previo cadastrado, desabilita o perfil     	
+     		IF va_ProfileExists > 0
+     		THEN 	
+			
+				UPDATE UserProfile
+     			   SET inDeleted = 0
+     			     , inStatus = 0
+     				, dtLastUpdate = NOW()
+     			WHERE UserProfile.idNetwork = in_idNetwork
+     			AND   UserProfile.idUser    = va_idLektoUser
+     			AND   UserProfile.coProfile = 'ADSN';
+				
+			END IF;
      		
      	END IF; # isNetworkAdmin
-     	
+    	
      	/*************************************/
-     	/* Perfil: Administrador de Regional */      
+     	/* Perfil: Administrador de Regional */   
+
+		-- Verifica se o usuário já possui perfil cadastrado
+		SET va_ProfileExists := ( SELECT COUNT(1)
+							 FROM UserProfile
+							 WHERE idNetwork = in_idNetwork
+							 AND   idUser    = va_idLektoUser
+							 AND   coProfile = 'ADMR' 
+							 FOR UPDATE );				   
 
      	INSERT INTO tabProfileRegional 
      	(
@@ -928,12 +993,7 @@ DataIntegration: BEGIN
      	THEN
      	
      		# Possui registro cadastrado com o perfil Administrador de regional?
-     		IF ( SELECT COUNT(*)
-     			FROM UserProfile
-     			WHERE UserProfile.idNetwork = in_idNetwork
-     			AND   UserProfile.idUser    = va_idLektoUser
-     			AND   UserProfile.coProfile = 'ADMR'
-     		   ) = 0 
+     		IF va_ProfileExists = 0 
      		THEN 
      		
      			INSERT INTO UserProfile
@@ -991,11 +1051,35 @@ DataIntegration: BEGIN
 						    WHERE UserProfileRegional.idUserProfile     = UserProfile.idUserProfile
 						    AND   UserProfileRegional.idRegionalNetwork = NetRefr.idNetwork
 						  );
+						  
+     	ELSE 
+		
+			-- Se nao for administrador de regional (ou nao for enviado no payload) mas possuir perfil previo cadastrado, desabilita o perfil     	
+     		IF va_ProfileExists > 0
+     		THEN 	
 			
+				UPDATE UserProfile
+     			   SET inDeleted = 0
+     			     , inStatus = 0
+     				, dtLastUpdate = NOW()
+     			WHERE UserProfile.idNetwork = in_idNetwork
+     			AND   UserProfile.idUser    = va_idLektoUser
+     			AND   UserProfile.coProfile = 'ADMR';			
+			
+			END IF;
+
      	END IF; 
 
      	/***********************************/
-     	/* Perfil: Administrador de Escola */      
+     	/* Perfil: Administrador de Escola */  
+
+		-- Verifica se o usuário já possui perfil cadastrado
+		SET va_ProfileExists := ( SELECT COUNT(1)
+							 FROM UserProfile
+							 WHERE idNetwork = in_idNetwork
+							 AND   idUser    = va_idLektoUser
+							 AND   coProfile = 'ADMS' 
+							 FOR UPDATE );			    
      
      	INSERT INTO tabSchoolManager 
      	(
@@ -1008,12 +1092,7 @@ DataIntegration: BEGIN
      	THEN
      
      		# Possui registro cadastrado com o perfil Administrador de escola?
-     		IF ( SELECT COUNT(*)
-     			FROM UserProfile
-     			WHERE idNetwork = in_idNetwork
-     			AND   idUser    = va_idLektoUser
-     			AND   coProfile = 'ADMS'
-     		   ) = 0
+     		IF va_ProfileExists = 0
      		THEN
      		
      			INSERT INTO UserProfile
@@ -1073,6 +1152,22 @@ DataIntegration: BEGIN
 						    AND   UserProfileSchool.idUserProfile = UserProfile.idUserProfile
 					       );			
      
+     	ELSE 
+		
+			-- Se nao for administrador de escola (ou nao for enviado no payload) mas possuir perfil previo cadastrado, desabilita o perfil     	
+     		IF va_ProfileExists > 0
+     		THEN 	
+			
+				UPDATE UserProfile
+     			   SET inDeleted = 0
+     			     , inStatus = 0
+     				, dtLastUpdate = NOW()
+     			WHERE UserProfile.idNetwork = in_idNetwork
+     			AND   UserProfile.idUser    = va_idLektoUser
+     			AND   UserProfile.coProfile = 'ADMS';		
+				
+			END IF;				
+	
      	END IF; # schoolManager
 
      	/***********************************/
@@ -1279,4 +1374,4 @@ DataIntegration: BEGIN
 
      COMMIT;
 
-END;
+END
